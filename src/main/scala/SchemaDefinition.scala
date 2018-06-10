@@ -1,5 +1,8 @@
+import SchemaDefinition.EpisodeEnum
 import sangria.execution.deferred.{Fetcher, HasId}
 import sangria.schema._
+import sangria.macros.derive._
+import sangria.macros.derive.GraphQLField
 
 import scala.concurrent.Future
 
@@ -48,7 +51,34 @@ object SchemaDefinition {
           resolve = _.value.appearsIn map (e ⇒ Some(e)))
       ))
 
-  val Human =
+  implicit val episodeEnum = EpisodeEnum
+
+  implicit val Human = deriveObjectType[Unit, Human](
+    ObjectTypeName("Human"),
+    ObjectTypeDescription("A humanoid creature in the Star Wars universe."),
+    DocumentField("id", "The id of the human."),
+    DocumentField("name", "The name of the human."),
+    DocumentField("friends", "The friends of the human, or an empty list if they have none."),
+    DocumentField("appearsIn", "Which movies they appear in."),
+    DocumentField("homePlanet", "The home planet of the human, or null if unknown.")
+  )
+
+  trait Mutation {
+    @GraphQLField
+    def addHuman(id: String, name: Option[String]) = {
+      val h = Human(id, name, List(), List(), None)
+      val moreHumans = CharacterRepo.humans ++ h
+      println(moreHumans)
+      h
+    }
+  }
+
+  case class MyCtx(mutation: Mutation)
+
+  // implicit val HumanType = deriveObjectType[MyCtx, Human]()
+  val MutationType = deriveContextObjectType[MyCtx, Mutation, Unit](_.mutation)
+
+  val Human2 =
     ObjectType(
       "Human",
       "A humanoid creature in the Star Wars universe.",
@@ -121,5 +151,5 @@ object SchemaDefinition {
         resolve = ctx ⇒ ctx.ctx.getDroids(ctx arg LimitArg, ctx arg OffsetArg))
     ))
 
-  val StarWarsSchema = Schema(Query)
+  val StarWarsSchema = Schema(Query, MutationType)
 }
