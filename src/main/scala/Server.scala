@@ -29,12 +29,14 @@ object Server extends App {
   implicit val materializer = ActorMaterializer()
 
   import system.dispatcher
-  
+
+  val ctx = new CharacterRepo
+  val executor = Executor(SchemaDefinition.StarWarsSchema, deferredResolver = DeferredResolver.fetchers(SchemaDefinition.characters))
+
   def executeGraphQL(query: Document, operationName: Option[String], variables: Json) =
-    complete(Executor.execute(SchemaDefinition.StarWarsSchema, query, new CharacterRepo,
+    complete(executor.execute(query, ctx, (),
       variables = if (variables.isNull) Json.obj() else variables,
-      operationName = operationName,
-      deferredResolver = DeferredResolver.fetchers(SchemaDefinition.characters))
+      operationName = operationName)
         .map(OK → _)
         .recover {
           case error: QueryAnalysisError ⇒ BadRequest → error.resolveError

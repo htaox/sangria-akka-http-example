@@ -1,3 +1,5 @@
+import SchemaDefinition.Mutation
+
 object Episode extends Enumeration {
   val NEWHOPE, EMPIRE, JEDI = Value
 }
@@ -23,7 +25,7 @@ case class Droid(
   appearsIn: List[Episode.Value],
   primaryFunction: Option[String]) extends Character
 
-class CharacterRepo {
+class CharacterRepo extends Mutation {
   import CharacterRepo._
 
   def getHero(episode: Option[Episode.Value]) =
@@ -39,7 +41,7 @@ class CharacterRepo {
 }
 
 object CharacterRepo {
-  val humans = List(
+  var humans = List(
     Human(
       id = "1000",
       name = Some("Luke Skywalker"),

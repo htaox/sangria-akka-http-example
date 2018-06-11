@@ -1,4 +1,5 @@
 import SchemaDefinition.EpisodeEnum
+import sangria.execution.UserFacingError
 import sangria.execution.deferred.{Fetcher, HasId}
 import sangria.schema._
 import sangria.macros.derive._
@@ -10,6 +11,8 @@ import scala.concurrent.Future
  * Defines a GraphQL schema for the current project
  */
 object SchemaDefinition {
+  case class MutationError(message: String) extends Exception(message) with UserFacingError
+
   /**
     * Resolves the lists of characters. These resolutions are batched and
     * cached for the duration of a query.
@@ -53,7 +56,7 @@ object SchemaDefinition {
 
   implicit val episodeEnum = EpisodeEnum
 
-  implicit val Human = deriveObjectType[Unit, Human](
+  implicit val HumanType = deriveObjectType[CharacterRepo, Human](
     ObjectTypeName("Human"),
     ObjectTypeDescription("A humanoid creature in the Star Wars universe."),
     DocumentField("id", "The id of the human."),
@@ -63,20 +66,39 @@ object SchemaDefinition {
     DocumentField("homePlanet", "The home planet of the human, or null if unknown.")
   )
 
+  /*
+    mutation AddTest {
+      addHuman(id: "1234", name: "Tester") {
+        id,
+        name
+      }
+    }
+
+    query AllHumans {
+      humans {
+        id,
+        name
+      }
+    }
+
+    query GetId1234 {
+      human(id: "1234") {
+        id,
+        name
+      }
+    }
+   
+  */
   trait Mutation {
     @GraphQLField
     def addHuman(id: String, name: Option[String]) = {
       val h = Human(id, name, List(), List(), None)
-      val moreHumans = CharacterRepo.humans ++ h
-      println(moreHumans)
+      CharacterRepo.humans = CharacterRepo.humans ::: List(h)
       h
     }
   }
 
-  case class MyCtx(mutation: Mutation)
-
-  // implicit val HumanType = deriveObjectType[MyCtx, Human]()
-  val MutationType = deriveContextObjectType[MyCtx, Mutation, Unit](_.mutation)
+  val MutationType = deriveContextObjectType[CharacterRepo, Mutation, Unit](identity)
 
   val Human2 =
     ObjectType(
@@ -137,13 +159,13 @@ object SchemaDefinition {
         arguments = EpisodeArg :: Nil,
         deprecationReason = Some("Use `human` or `droid` fields instead"),
         resolve = (ctx) ⇒ ctx.ctx.getHero(ctx.arg(EpisodeArg))),
-      Field("human", OptionType(Human),
+      Field("human", OptionType(HumanType),
         arguments = ID :: Nil,
         resolve = ctx ⇒ ctx.ctx.getHuman(ctx arg ID)),
       Field("droid", Droid,
         arguments = ID :: Nil,
         resolve = ctx ⇒ ctx.ctx.getDroid(ctx arg ID).get),
-      Field("humans", ListType(Human),
+      Field("humans", ListType(HumanType),
         arguments = LimitArg :: OffsetArg :: Nil,
         resolve = ctx ⇒ ctx.ctx.getHumans(ctx arg LimitArg, ctx arg OffsetArg)),
       Field("droids", ListType(Droid),
@@ -151,5 +173,5 @@ object SchemaDefinition {
         resolve = ctx ⇒ ctx.ctx.getDroids(ctx arg LimitArg, ctx arg OffsetArg))
     ))
 
-  val StarWarsSchema = Schema(Query, MutationType)
+  val StarWarsSchema = Schema(Query, Some(MutationType))
 }
