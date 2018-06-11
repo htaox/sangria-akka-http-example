@@ -2,8 +2,7 @@ import SchemaDefinition.EpisodeEnum
 import sangria.execution.UserFacingError
 import sangria.execution.deferred.{Fetcher, HasId}
 import sangria.schema._
-import sangria.macros.derive._
-import sangria.macros.derive.GraphQLField
+import sangria.macros.derive.{GraphQLField, deriveObjectType, _}
 
 import scala.concurrent.Future
 
@@ -21,6 +20,7 @@ object SchemaDefinition {
     (ctx: CharacterRepo, ids: Seq[String]) ⇒
       Future.successful(ids.flatMap(id ⇒ ctx.getHuman(id) orElse ctx.getDroid(id))))(HasId(_.id))
 
+  /*
   val EpisodeEnum = EnumType(
     "Episode",
     Some("One of the films in the Star Wars Trilogy"),
@@ -34,8 +34,14 @@ object SchemaDefinition {
       EnumValue("JEDI",
         value = Episode.JEDI,
         description = Some("Released in 1983."))))
+  */
 
-  val Character: InterfaceType[CharacterRepo, Character] =
+  val EpisodeEnum = deriveEnumType[Episode.Value](
+    EnumTypeName("Episode"),
+    EnumTypeDescription("One of the films in the Star Wars Trilogy")
+  )
+
+  val CharacterType: InterfaceType[CharacterRepo, Character] =
     InterfaceType(
       "Character",
       "A character in the Star Wars Trilogy",
@@ -46,7 +52,7 @@ object SchemaDefinition {
         Field("name", OptionType(StringType),
           Some("The name of the character."),
           resolve = _.value.name),
-        Field("friends", ListType(Character),
+        Field("friends", ListType(CharacterType),
           Some("The friends of the character, or an empty list if they have none."),
           resolve = ctx ⇒ characters.deferSeqOpt(ctx.value.friends)),
         Field("appearsIn", OptionType(ListType(OptionType(EpisodeEnum))),
@@ -55,10 +61,12 @@ object SchemaDefinition {
       ))
 
   implicit val episodeEnum = EpisodeEnum
+  implicit val characterType = CharacterType
 
   implicit val HumanType = deriveObjectType[CharacterRepo, Human](
     ObjectTypeName("Human"),
     ObjectTypeDescription("A humanoid creature in the Star Wars universe."),
+    Interfaces[CharacterRepo, Human](CharacterType),
     DocumentField("id", "The id of the human."),
     DocumentField("name", "The name of the human."),
     DocumentField("friends", "The friends of the human, or an empty list if they have none."),
@@ -87,19 +95,35 @@ object SchemaDefinition {
         name
       }
     }
-   
+  // Using variables
+  query GetId1234($id: String!) {
+    human(id: $id) {
+      id,
+      name
+    }
+  }
+
+  {
+    "id": "1234"
+  }
+
   */
   trait Mutation {
     @GraphQLField
     def addHuman(id: String, name: Option[String]) = {
       val h = Human(id, name, List(), List(), None)
-      CharacterRepo.humans = CharacterRepo.humans ::: List(h)
+
+      val preInsert = if (CharacterRepo.humans.exists(a => a.id == id))
+        CharacterRepo.humans.filter(a => a.id != id) else CharacterRepo.humans
+
+      CharacterRepo.humans =  preInsert ::: List(h)
       h
     }
   }
 
   val MutationType = deriveContextObjectType[CharacterRepo, Mutation, Unit](identity)
 
+  /*
   val Human2 =
     ObjectType(
       "Human",
@@ -122,7 +146,9 @@ object SchemaDefinition {
           Some("The home planet of the human, or null if unknown."),
           resolve = _.value.homePlanet)
       ))
+  */
 
+  /*
   val Droid = ObjectType(
     "Droid",
     "A mechanical creature in the Star Wars universe.",
@@ -144,6 +170,18 @@ object SchemaDefinition {
         Some("The primary function of the droid."),
         resolve = _.value.primaryFunction)
     ))
+  */
+
+  implicit val DroidType = deriveObjectType[CharacterRepo, Droid](
+    ObjectTypeName("Droid"),
+    ObjectTypeDescription("A mechanical creature in the Star Wars universe."),
+    Interfaces[CharacterRepo, Droid](CharacterType),
+    DocumentField("id", "The id of the droid."),
+    DocumentField("name", "The name of the droid."),
+    DocumentField("friends", "The friends of the droid, or an empty list if they have none."),
+    DocumentField("appearsIn", "Which movies they appear in."),
+    DocumentField("primaryFunction", "The primary function of the droid.")
+  )
 
   val ID = Argument("id", StringType, description = "id of the character")
 
@@ -155,20 +193,20 @@ object SchemaDefinition {
 
   val Query = ObjectType(
     "Query", fields[CharacterRepo, Unit](
-      Field("hero", Character,
+      Field("hero", CharacterType,
         arguments = EpisodeArg :: Nil,
         deprecationReason = Some("Use `human` or `droid` fields instead"),
         resolve = (ctx) ⇒ ctx.ctx.getHero(ctx.arg(EpisodeArg))),
       Field("human", OptionType(HumanType),
         arguments = ID :: Nil,
         resolve = ctx ⇒ ctx.ctx.getHuman(ctx arg ID)),
-      Field("droid", Droid,
+      Field("droid", DroidType,
         arguments = ID :: Nil,
         resolve = ctx ⇒ ctx.ctx.getDroid(ctx arg ID).get),
       Field("humans", ListType(HumanType),
         arguments = LimitArg :: OffsetArg :: Nil,
         resolve = ctx ⇒ ctx.ctx.getHumans(ctx arg LimitArg, ctx arg OffsetArg)),
-      Field("droids", ListType(Droid),
+      Field("droids", ListType(DroidType),
         arguments = LimitArg :: OffsetArg :: Nil,
         resolve = ctx ⇒ ctx.ctx.getDroids(ctx arg LimitArg, ctx arg OffsetArg))
     ))
