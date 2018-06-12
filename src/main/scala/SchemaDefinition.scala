@@ -1,3 +1,5 @@
+import Data._
+import Middleware.{Authorised, Permission}
 import sangria.execution.UserFacingError
 import sangria.execution.deferred.{Fetcher, HasId}
 import sangria.schema._
@@ -16,19 +18,19 @@ object SchemaDefinition {
     * cached for the duration of a query.
     */
   val characters = Fetcher.caching(
-    (ctx: CharacterRepo, ids: Seq[String]) ⇒
-      Future.successful(ids.flatMap(id ⇒ ctx.getHuman(id) orElse ctx.getDroid(id))))(HasId(_.id))
+    (ctx: SecureContext, ids: Seq[String]) ⇒
+      Future.successful(ids.flatMap(id ⇒ ctx.characterRepo.getHuman(id) orElse ctx.characterRepo.getDroid(id))))(HasId(_.id))
 
   val EpisodeEnum = deriveEnumType[Episode.Value](
     EnumTypeName("Episode"),
     EnumTypeDescription("One of the films in the Star Wars Trilogy")
   )
 
-  val CharacterType: InterfaceType[CharacterRepo, Character] =
+  val CharacterType: InterfaceType[SecureContext, Character] =
     InterfaceType(
       "Character",
       "A character in the Star Wars Trilogy",
-      () ⇒ fields[CharacterRepo, Character](
+      () ⇒ fields[SecureContext, Character](
         Field("id", StringType,
           Some("The id of the character."),
           resolve = _.value.id),
@@ -45,10 +47,10 @@ object SchemaDefinition {
 
   implicit val episodeEnum = EpisodeEnum
 
-  implicit val HumanType = deriveObjectType[CharacterRepo, Human](
+  implicit val HumanType = deriveObjectType[SecureContext, Human](
     ObjectTypeName("Human"),
     ObjectTypeDescription("A humanoid creature in the Star Wars universe."),
-    Interfaces[CharacterRepo, Human](CharacterType),
+    Interfaces[SecureContext, Human](CharacterType),
     ReplaceField("friends",
       Field("friends", ListType(CharacterType),
         Some("The friends of the human, or an empty list if they have none."),
@@ -70,12 +72,28 @@ object SchemaDefinition {
     }
   }
 
-  val MutationType = deriveContextObjectType[CharacterRepo, Mutation, Unit](identity)
+  // Can derivedContextObject get access to Context?
+  // val MutationType2 = deriveContextObjectType[SecureContext, Mutation, Unit](_.characterRepo)
 
-  implicit val DroidType = deriveObjectType[CharacterRepo, Droid](
+  val MutationType = ObjectType("Mutation", fields[SecureContext, Unit](
+    Field("login", OptionType(StringType),
+      arguments = UserNameArg :: PasswordArg :: Nil,
+      resolve = ctx ⇒ UpdateCtx(ctx.ctx.login(ctx.arg(UserNameArg), ctx.arg(PasswordArg))) { token ⇒
+        ctx.ctx.copy(token = Some(token))
+      }),
+    Field("addHuman", OptionType(ListType(StringType)),
+      arguments = NewHumanIdArg :: NewHumanNameArg :: Nil,
+      resolve = ctx ⇒ ctx.ctx.authorised("EDIT_HUMANS") { _ ⇒
+        ctx.ctx.characterRepo.addHuman(ctx.arg(NewHumanIdArg), ctx.arg(NewHumanNameArg))
+        ctx.ctx.characterRepo.getHuman(ctx.arg(NewHumanIdArg))
+      })
+  ))
+
+
+  implicit val DroidType = deriveObjectType[SecureContext, Droid](
     ObjectTypeName("Droid"),
     ObjectTypeDescription("A mechanical creature in the Star Wars universe."),
-    Interfaces[CharacterRepo, Droid](CharacterType),
+    Interfaces[SecureContext, Droid](CharacterType),
     ReplaceField("friends",
       Field("friends", ListType(CharacterType),
         Some("The friends of the human, or an empty list if they have none."),
@@ -83,6 +101,19 @@ object SchemaDefinition {
     ),
     DocumentField("primaryFunction", "The primary function of the droid.")
   )
+
+  // Security types
+  val UserType = ObjectType("User", fields[SecureContext, User](
+    Field("userName", StringType, resolve = _.value.userName),
+    Field("permissions", OptionType(ListType(StringType)),
+      tags = Permission("VIEW_PERMISSIONS") :: Nil,
+      resolve = _.value.permissions)
+  ))
+
+  val UserNameArg = Argument("userName", StringType)
+  val PasswordArg = Argument("password", StringType)
+  val NewHumanIdArg = Argument("id", StringType)
+  val NewHumanNameArg = Argument("name", OptionInputType(StringType))
 
   val ID = Argument("id", StringType, description = "id of the character")
 
@@ -93,23 +124,36 @@ object SchemaDefinition {
   val OffsetArg = Argument("offset", OptionInputType(IntType), defaultValue = 0)
 
   val Query = ObjectType(
-    "Query", fields[CharacterRepo, Unit](
+    "Query", fields[SecureContext, Unit](
+      Field("me", OptionType(UserType), tags = Authorised :: Nil,resolve = _.ctx.user),
       Field("hero", CharacterType,
         arguments = EpisodeArg :: Nil,
         deprecationReason = Some("Use `human` or `droid` fields instead"),
-        resolve = (ctx) ⇒ ctx.ctx.getHero(ctx.arg(EpisodeArg))),
+        resolve = ctx => ctx.ctx.characterRepo.getHero(ctx.arg(EpisodeArg))
+        // resolve = (ctx) ⇒ ctx.ctx.getHero(ctx.arg(EpisodeArg))
+      ),
       Field("human", OptionType(HumanType),
         arguments = ID :: Nil,
-        resolve = ctx ⇒ ctx.ctx.getHuman(ctx arg ID)),
+        resolve = ctx => ctx.ctx.characterRepo.getHuman(ctx arg ID)
+        // resolve = ctx ⇒ ctx.ctx.getHuman(ctx arg ID)
+      ),
       Field("droid", DroidType,
         arguments = ID :: Nil,
-        resolve = ctx ⇒ ctx.ctx.getDroid(ctx arg ID).get),
+        resolve = ctx => ctx.ctx.characterRepo.getDroid(ctx arg ID)
+        // resolve = ctx ⇒ ctx.ctx.getDroid(ctx arg ID).get
+      ),
       Field("humans", ListType(HumanType),
         arguments = LimitArg :: OffsetArg :: Nil,
-        resolve = ctx ⇒ ctx.ctx.getHumans(ctx arg LimitArg, ctx arg OffsetArg)),
+        tags = Permission("VIEW_HUMANS") :: Nil,
+        // resolve = ctx ⇒ ctx.ctx.getHumans(ctx arg LimitArg, ctx arg OffsetArg)
+        resolve = ctx => ctx.ctx.characterRepo.getHumans(ctx arg LimitArg, ctx arg OffsetArg)
+      ),
       Field("droids", ListType(DroidType),
         arguments = LimitArg :: OffsetArg :: Nil,
-        resolve = ctx ⇒ ctx.ctx.getDroids(ctx arg LimitArg, ctx arg OffsetArg))
+        tags = Permission("VIEW_DROIDS") :: Nil,
+        resolve = ctx => ctx.ctx.characterRepo.getDroids(ctx arg LimitArg, ctx arg OffsetArg)
+        // resolve = ctx ⇒ ctx.ctx.getDroids(ctx arg LimitArg, ctx arg OffsetArg)
+      )
     ))
 
   val StarWarsSchema = Schema(Query, Some(MutationType))

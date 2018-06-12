@@ -4,7 +4,6 @@ import sangria.execution.{ErrorWithResolver, Executor, QueryAnalysisError}
 import sangria.parser.{QueryParser, SyntaxError}
 import sangria.parser.DeliveryScheme.Try
 import sangria.marshalling.circe._
-
 import akka.actor.ActorSystem
 import akka.http.scaladsl.Http
 import akka.http.scaladsl.model.StatusCodes._
@@ -12,16 +11,13 @@ import akka.http.scaladsl.server.Directives._
 import akka.http.scaladsl.model.MediaTypes._
 import akka.http.scaladsl.server._
 import akka.stream.ActorMaterializer
-
 import de.heikoseeberger.akkahttpcirce.ErrorAccumulatingCirceSupport._
-
 import io.circe._
 import io.circe.optics.JsonPath._
 import io.circe.parser._
 
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success}
-
 import GraphQLRequestUnmarshaller._
 
 object Server extends App {
@@ -30,18 +26,25 @@ object Server extends App {
 
   import system.dispatcher
 
-  val ctx = new CharacterRepo
-  val executor = Executor(SchemaDefinition.StarWarsSchema, deferredResolver = DeferredResolver.fetchers(SchemaDefinition.characters))
+  val characterRepo = new CharacterRepo
+  val userRepo = new Data.UserRepo
 
-  def executeGraphQL(query: Document, operationName: Option[String], variables: Json) =
-    complete(executor.execute(query, ctx, (),
-      variables = if (variables.isNull) Json.obj() else variables,
-      operationName = operationName)
-        .map(OK → _)
-        .recover {
-          case error: QueryAnalysisError ⇒ BadRequest → error.resolveError
-          case error: ErrorWithResolver ⇒ InternalServerError → error.resolveError
-        })
+  def executeGraphQL(query: Document, operationName: Option[String], variables: Json, token: Option[String]) = {
+    complete(Executor.execute(
+      SchemaDefinition.StarWarsSchema,
+      query,
+      userContext = new Data.SecureContext(token, userRepo, characterRepo),
+      exceptionHandler = Data.errorHandler,
+      middleware = Middleware.SecurityEnforcer :: Nil,
+      deferredResolver = DeferredResolver.fetchers(SchemaDefinition.characters)
+    )
+      .map(OK → _)
+      .recover {
+        case error: QueryAnalysisError ⇒ BadRequest → error.resolveError
+        case error: ErrorWithResolver ⇒ InternalServerError → error.resolveError
+      }
+    )
+  }
 
   def formatError(error: Throwable): Json = error match {
     case syntaxError: SyntaxError ⇒
@@ -67,41 +70,49 @@ object Server extends App {
           getFromResource("assets/graphiql.html")
         } ~
         parameters('query, 'operationName.?, 'variables.?) { (query, operationName, variables) ⇒
-          QueryParser.parse(query) match {
-            case Success(ast) ⇒
-              variables.map(parse) match {
-                case Some(Left(error)) ⇒ complete(BadRequest, formatError(error))
-                case Some(Right(json)) ⇒ executeGraphQL(ast, operationName, json)
-                case None ⇒ executeGraphQL(ast, operationName, Json.obj())
-              }
-            case Failure(error) ⇒ complete(BadRequest, formatError(error))
+          optionalHeaderValueByName("SecurityToken") { token ⇒
+            QueryParser.parse(query) match {
+
+              case Success(ast) ⇒
+                variables.map(parse) match {
+                  case Some(Left(error)) ⇒ complete(BadRequest, formatError(error))
+                  case Some(Right(json)) ⇒ executeGraphQL(ast, operationName, json, token)
+                  case None ⇒ executeGraphQL(ast, operationName, Json.obj(), token)
+                }
+              case Failure(error) ⇒ complete(BadRequest, formatError(error))
+
+            }
           }
         }
       } ~
       post {
         parameters('query.?, 'operationName.?, 'variables.?) { (queryParam, operationNameParam, variablesParam) ⇒
-          entity(as[Json]) { body ⇒
-            val query = queryParam orElse root.query.string.getOption(body)
-            val operationName = operationNameParam orElse root.operationName.string.getOption(body)
-            val variablesStr = variablesParam orElse root.variables.string.getOption(body)
+          optionalHeaderValueByName("SecurityToken") { token ⇒
 
-            query.map(QueryParser.parse(_)) match {
-              case Some(Success(ast)) ⇒
-                variablesStr.map(parse) match {
+            entity(as[Json]) { body ⇒
+              val query = queryParam orElse root.query.string.getOption(body)
+              val operationName = operationNameParam orElse root.operationName.string.getOption(body)
+              val variablesStr = variablesParam orElse root.variables.string.getOption(body)
+
+              query.map(QueryParser.parse(_)) match {
+                case Some(Success(ast)) ⇒
+                  variablesStr.map(parse) match {
+                    case Some(Left(error)) ⇒ complete(BadRequest, formatError(error))
+                    case Some(Right(json)) ⇒ executeGraphQL(ast, operationName, json, token)
+                    case None ⇒ executeGraphQL(ast, operationName, root.variables.json.getOption(body) getOrElse Json.obj(), token)
+                  }
+                case Some(Failure(error)) ⇒ complete(BadRequest, formatError(error))
+                case None ⇒ complete(BadRequest, formatError("No query to execute"))
+              }
+            } ~
+              entity(as[Document]) { document ⇒
+                variablesParam.map(parse) match {
                   case Some(Left(error)) ⇒ complete(BadRequest, formatError(error))
-                  case Some(Right(json)) ⇒ executeGraphQL(ast, operationName, json)
-                  case None ⇒ executeGraphQL(ast, operationName, root.variables.json.getOption(body) getOrElse Json.obj())
+                  case Some(Right(json)) ⇒ executeGraphQL(document, operationNameParam, json, token)
+                  case None ⇒ executeGraphQL(document, operationNameParam, Json.obj(), token)
                 }
-              case Some(Failure(error)) ⇒ complete(BadRequest, formatError(error))
-              case None ⇒ complete(BadRequest, formatError("No query to execute"))
-            }
-          } ~
-          entity(as[Document]) { document ⇒
-            variablesParam.map(parse) match {
-              case Some(Left(error)) ⇒ complete(BadRequest, formatError(error))
-              case Some(Right(json)) ⇒ executeGraphQL(document, operationNameParam, json)
-              case None ⇒ executeGraphQL(document, operationNameParam, Json.obj())
-            }
+              }
+
           }
         }
       }
