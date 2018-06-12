@@ -1,0 +1,31 @@
+mutation AddTest {
+  addHuman(id: "1234", name: "Tester") {
+    id,
+    name
+  }
+}
+
+query AllHumans {
+  humans {
+    id,
+    name
+  }
+}
+
+query GetId1234 {
+  human(id: "1234") {
+    id,
+    name
+  }
+}
+// Using variables
+query GetId1234($id: String!) {
+    human(id: $id) {
+        id,
+        name
+    }
+}
+
+{
+    "id": "1234"
+}
