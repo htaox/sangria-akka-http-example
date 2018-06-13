@@ -1,19 +1,16 @@
 import org.scalatest.{Matchers, WordSpec}
-
 import sangria.ast.Document
 import sangria.macros._
 import sangria.execution.Executor
 import sangria.execution.deferred.DeferredResolver
 import sangria.marshalling.circe._
-
 import io.circe._
 import io.circe.parser._
 
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
-
-import SchemaDefinition.StarWarsSchema
+import Server.{characterRepo, userRepo}
 
 class SchemaSpec extends WordSpec with Matchers {
   "StartWars Schema" should {
@@ -80,12 +77,18 @@ class SchemaSpec extends WordSpec with Matchers {
     }
   }
 
-  def executeQuery(query: Document, vars: Json = Json.obj()) = {
-    val futureResult = Executor.execute(StarWarsSchema, query,
+  def executeQuery(query: Document, vars: Json = Json.obj(), token: Option[String] = None) = {
+    val futureResult = Executor.execute(
+      SchemaDefinition.StarWarsSchema,
+      query,
       variables = vars,
-      userContext = new CharacterRepo,
-      deferredResolver = DeferredResolver.fetchers(SchemaDefinition.characters))
+      userContext = new Data.SecureContext(token, userRepo, characterRepo),
+      exceptionHandler = Data.errorHandler,
+      middleware = Middleware.SecurityEnforcer :: Nil,
+      deferredResolver = DeferredResolver.fetchers(SchemaDefinition.characters)
+    )
 
     Await.result(futureResult, 10.seconds)
   }
+
 }

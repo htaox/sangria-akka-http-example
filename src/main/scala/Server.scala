@@ -33,6 +33,8 @@ object Server extends App {
     complete(Executor.execute(
       SchemaDefinition.StarWarsSchema,
       query,
+      operationName = operationName,
+      variables = if (variables.isNull) Json.obj() else variables,
       userContext = new Data.SecureContext(token, userRepo, characterRepo),
       exceptionHandler = Data.errorHandler,
       middleware = Middleware.SecurityEnforcer :: Nil,

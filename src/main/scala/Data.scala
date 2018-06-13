@@ -117,11 +117,11 @@ object Data {
     def authenticate(userName: String, password: String): Option[String] =
       if (userName == "admin" && password == "secret") {
         val token = UUID.randomUUID().toString
-        tokens = tokens + (token → User("admin", "VIEW_PERMISSIONS" :: "EDIT_COLORS" :: "VIEW_COLORS" :: Nil))
+        tokens = tokens + (token → User("admin", "VIEW_PERMISSIONS" :: "EDIT_HUMANS" :: "VIEW_HUMANS" :: Nil))
         Some(token)
       } else if (userName == "john" && password == "apples") {
         val token = UUID.randomUUID().toString
-        tokens = tokens + (token → User("john", "VIEW_COLORS" :: Nil))
+        tokens = tokens + (token → User("john", "VIEW_HUMANS" :: Nil))
         Some(token)
       } else None
 

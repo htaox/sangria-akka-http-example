@@ -29,3 +29,12 @@ query GetId1234($id: String!) {
 {
     "id": "1234"
 }
+
+// Test Auth
+mutation LoginAndMutate {
+  login(userName: "admin", password: "secret")
+
+  withHuman: addHuman(id: "2234", name: "Test"){
+    id
+  }
+}

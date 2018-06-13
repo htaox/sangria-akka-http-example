@@ -60,6 +60,8 @@ object SchemaDefinition {
   )
 
   trait Mutation {
+    this: CharacterRepo =>
+
     @GraphQLField
     def addHuman(id: String, name: Option[String]) = {
       val h = Human(id, name, List(), List(), None)
@@ -73,34 +75,7 @@ object SchemaDefinition {
   }
 
   // Can derivedContextObject get access to Context?
-  // val MutationType2 = deriveContextObjectType[SecureContext, Mutation, Unit](_.characterRepo)
-
-  val MutationType = ObjectType("Mutation", fields[SecureContext, Unit](
-    Field("login", OptionType(StringType),
-      arguments = UserNameArg :: PasswordArg :: Nil,
-      resolve = ctx ⇒ UpdateCtx(ctx.ctx.login(ctx.arg(UserNameArg), ctx.arg(PasswordArg))) { token ⇒
-        ctx.ctx.copy(token = Some(token))
-      }),
-    Field("addHuman", OptionType(ListType(StringType)),
-      arguments = NewHumanIdArg :: NewHumanNameArg :: Nil,
-      resolve = ctx ⇒ ctx.ctx.authorised("EDIT_HUMANS") { _ ⇒
-        ctx.ctx.characterRepo.addHuman(ctx.arg(NewHumanIdArg), ctx.arg(NewHumanNameArg))
-        ctx.ctx.characterRepo.getHuman(ctx.arg(NewHumanIdArg))
-      })
-  ))
-
-
-  implicit val DroidType = deriveObjectType[SecureContext, Droid](
-    ObjectTypeName("Droid"),
-    ObjectTypeDescription("A mechanical creature in the Star Wars universe."),
-    Interfaces[SecureContext, Droid](CharacterType),
-    ReplaceField("friends",
-      Field("friends", ListType(CharacterType),
-        Some("The friends of the human, or an empty list if they have none."),
-        resolve = ctx ⇒ characters.deferSeqOpt(ctx.value.friends))
-    ),
-    DocumentField("primaryFunction", "The primary function of the droid.")
-  )
+  val MutationType3 = deriveContextObjectType[SecureContext, Mutation, Unit](_.characterRepo)
 
   // Security types
   val UserType = ObjectType("User", fields[SecureContext, User](
@@ -114,6 +89,35 @@ object SchemaDefinition {
   val PasswordArg = Argument("password", StringType)
   val NewHumanIdArg = Argument("id", StringType)
   val NewHumanNameArg = Argument("name", OptionInputType(StringType))
+
+  implicit val humanType = HumanType
+
+  val MutationType = ObjectType("Mutation", fields[SecureContext, Unit](
+    Field("login", OptionType(StringType),
+      arguments = UserNameArg :: PasswordArg :: Nil,
+      resolve = ctx ⇒ UpdateCtx(ctx.ctx.login(ctx.arg(UserNameArg), ctx.arg(PasswordArg))) { token =>
+        ctx.ctx.copy(token = Some(token))
+      }),
+    Field("addHuman", OptionType(HumanType),
+      arguments = NewHumanIdArg :: NewHumanNameArg :: Nil,
+      tags = Permission("EDIT_HUMANS") :: Nil,
+      resolve = ctx =>  {
+        ctx.ctx.characterRepo.addHuman(ctx.arg(NewHumanIdArg), ctx.arg(NewHumanNameArg))
+        ctx.ctx.characterRepo.getHuman(ctx.arg(NewHumanIdArg))
+      })
+  ))
+
+  implicit val DroidType = deriveObjectType[SecureContext, Droid](
+    ObjectTypeName("Droid"),
+    ObjectTypeDescription("A mechanical creature in the Star Wars universe."),
+    Interfaces[SecureContext, Droid](CharacterType),
+    ReplaceField("friends",
+      Field("friends", ListType(CharacterType),
+        Some("The friends of the human, or an empty list if they have none."),
+        resolve = ctx ⇒ characters.deferSeqOpt(ctx.value.friends))
+    ),
+    DocumentField("primaryFunction", "The primary function of the droid.")
+  )
 
   val ID = Argument("id", StringType, description = "id of the character")
 
@@ -134,12 +138,12 @@ object SchemaDefinition {
       ),
       Field("human", OptionType(HumanType),
         arguments = ID :: Nil,
-        resolve = ctx => ctx.ctx.characterRepo.getHuman(ctx arg ID)
+        resolve = ctx => ctx.ctx.characterRepo.getHuman(ctx arg ID).get
         // resolve = ctx ⇒ ctx.ctx.getHuman(ctx arg ID)
       ),
       Field("droid", DroidType,
         arguments = ID :: Nil,
-        resolve = ctx => ctx.ctx.characterRepo.getDroid(ctx arg ID)
+        resolve = ctx => ctx.ctx.characterRepo.getDroid(ctx arg ID).get
         // resolve = ctx ⇒ ctx.ctx.getDroid(ctx arg ID).get
       ),
       Field("humans", ListType(HumanType),
